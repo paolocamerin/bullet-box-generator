@@ -30,21 +30,71 @@ function roundtrip(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return loader.parse(view.buffer as ArrayBuffer);
 }
 
+/**
+ * A watertight, two-manifold mesh has every edge shared by exactly two
+ * triangles. Keys edges by (rounded) vertex position rather than raw index,
+ * so this works whether or not the geometry's vertices are welded — in
+ * particular on geometry reloaded from STL, which has no shared indices at
+ * all (every triangle carries its own 3 explicit vertices).
+ */
+function countManifoldDefects(geometry: THREE.BufferGeometry) {
+  const position = geometry.getAttribute("position");
+  const index = geometry.getIndex();
+  const vertexAt = (i: number) => index?.getX(i) ?? i;
+  const triangleCount = index ? index.count / 3 : position.count / 3;
+
+  const round = (v: number) => Math.round(v * 1000); // 0.001mm tolerance
+  const edgeKey = (a: number, b: number) => {
+    const pa = `${round(position.getX(a))},${round(position.getY(a))},${round(position.getZ(a))}`;
+    const pb = `${round(position.getX(b))},${round(position.getY(b))},${round(position.getZ(b))}`;
+    return pa < pb ? `${pa}|${pb}` : `${pb}|${pa}`;
+  };
+
+  const edgeCounts = new Map<string, number>();
+  for (let t = 0; t < triangleCount; t++) {
+    const a = vertexAt(t * 3);
+    const b = vertexAt(t * 3 + 1);
+    const c = vertexAt(t * 3 + 2);
+    for (const [x, y] of [
+      [a, b],
+      [b, c],
+      [c, a],
+    ] as const) {
+      const key = edgeKey(x, y);
+      edgeCounts.set(key, (edgeCounts.get(key) ?? 0) + 1);
+    }
+  }
+
+  let boundaryEdges = 0;
+  let nonManifoldEdges = 0;
+  for (const count of edgeCounts.values()) {
+    if (count === 1) boundaryEdges++;
+    else if (count !== 2) nonManifoldEdges++;
+  }
+
+  return { boundaryEdges, nonManifoldEdges, triangleCount };
+}
+
 function assertClean(geometry: THREE.BufferGeometry) {
   geometry.computeBoundingBox();
   const position = geometry.getAttribute("position");
   expect(position.count).toBeGreaterThan(0);
-
-  const index = geometry.getIndex();
-  const triangleCount = index ? index.count / 3 : position.count / 3;
-  expect(triangleCount).toBeGreaterThan(0);
-  expect(Number.isInteger(triangleCount)).toBe(true);
 
   for (let i = 0; i < position.count; i++) {
     expect(Number.isFinite(position.getX(i))).toBe(true);
     expect(Number.isFinite(position.getY(i))).toBe(true);
     expect(Number.isFinite(position.getZ(i))).toBe(true);
   }
+
+  const { boundaryEdges, nonManifoldEdges, triangleCount } = countManifoldDefects(geometry);
+  expect(triangleCount).toBeGreaterThan(0);
+  expect(Number.isInteger(triangleCount)).toBe(true);
+  // Watertight/two-manifold: every edge must be shared by exactly 2 triangles.
+  // A slicer treats any other count as a hole or a self-intersecting seam —
+  // this is exactly the defect class that made hole cuts vanish depending on
+  // print orientation.
+  expect(boundaryEdges).toBe(0);
+  expect(nonManifoldEdges).toBe(0);
 
   return { boundingBox: geometry.boundingBox!, triangleCount };
 }
@@ -53,6 +103,7 @@ describe.each([
   { name: "1x1 grid", params: { ...baseParams, columns: 1, rows: 1 } },
   { name: "typical 5x5 grid", params: baseParams },
   { name: "6x6 grid", params: { ...baseParams, columns: 6, rows: 6 } },
+  { name: "10x5 grid (non-square)", params: { ...baseParams, columns: 10, rows: 5 } },
   {
     name: "boundary: lidEngagementHeight === holeHeight",
     params: { ...baseParams, lidEngagementHeight: baseParams.holeHeight },

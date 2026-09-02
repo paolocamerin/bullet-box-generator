@@ -158,11 +158,22 @@ export function ControlPanel({
           <button className={viewMode === "exploded" ? "active" : ""} onClick={() => onViewModeChange("exploded")}>
             Exploded
           </button>
+          <button
+            className={viewMode === "sideBySide" ? "active" : ""}
+            onClick={() => onViewModeChange("sideBySide")}
+          >
+            Side by side
+          </button>
         </div>
       </Section>
 
       <Section title="Export">
-        <ExportButtons boxGeometry={boxGeometry} lidGeometry={lidGeometry} disabled={hasError} />
+        <ExportButtons
+          boxGeometry={boxGeometry}
+          lidGeometry={lidGeometry}
+          dimensions={dimensions}
+          disabled={hasError}
+        />
       </Section>
     </aside>
   );

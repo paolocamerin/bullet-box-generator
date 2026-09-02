@@ -166,18 +166,20 @@
 
 .view-toggle {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .view-toggle button,
 .export-actions button {
   flex: 1;
-  padding: 8px 10px;
+  min-width: 88px;
+  padding: 8px 8px;
   border-radius: 6px;
   border: 1px solid #2c303a;
   background: #1c1f26;
   color: #c3c8d1;
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
@@ -208,4 +210,32 @@
 .export-actions button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.export-combined {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #3d4a2c;
+  background: #263019;
+  color: #d4e2b8;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.export-combined:hover:not(:disabled) {
+  border-color: #5a7038;
+}
+
+.export-combined:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.export-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #6b7280;
 }
