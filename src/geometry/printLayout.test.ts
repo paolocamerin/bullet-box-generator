@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
+import { geometryToOBJ } from "../export/exportOBJ";
 import type { BoxParams } from "../types";
 import { buildBoxGeometry } from "./buildBoxGeometry";
 import { buildLidGeometry } from "./buildLidGeometry";
@@ -93,6 +94,34 @@ describe("buildPrintLayoutGeometry", () => {
     }
     expect(sawNearZero).toBe(true);
     expect(maxZOnLidSide).toBeCloseTo(dims.lidOuterHeight, 1);
+
+    box.dispose();
+    lid.dispose();
+    layout.dispose();
+  });
+
+  it("exports to OBJ fully vertex-welded (regression: Bambu reported 38546 non-manifold edges here)", () => {
+    // Checks the raw OBJ text directly, not a reloaded geometry: OBJLoader
+    // doesn't preserve `f` lines' vertex-index sharing when it rebuilds a
+    // BufferGeometry, so round-tripping through it would test the loader's
+    // reconstruction rather than our export.
+    const dims = computeDimensions(params);
+    const box = buildBoxGeometry(params);
+    const lid = buildLidGeometry(params);
+    const layout = buildPrintLayoutGeometry(box, lid, dims);
+
+    const obj = geometryToOBJ(layout);
+    const round = (v: number) => Math.round(v * 1000);
+    const seen = new Set<string>();
+    let duplicates = 0;
+    for (const line of obj.split("\n")) {
+      if (!line.startsWith("v ")) continue;
+      const [, x, y, z] = line.trim().split(/\s+/);
+      const key = `${round(Number(x))},${round(Number(y))},${round(Number(z))}`;
+      if (seen.has(key)) duplicates++;
+      else seen.add(key);
+    }
+    expect(duplicates).toBe(0);
 
     box.dispose();
     lid.dispose();

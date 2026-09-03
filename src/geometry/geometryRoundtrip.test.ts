@@ -1,6 +1,8 @@
 import * as THREE from "three";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { describe, expect, it } from "vitest";
+import { geometryToOBJ } from "../export/exportOBJ";
 import { geometryToSTL } from "../export/exportSTL";
 import type { BoxParams } from "../types";
 import { buildBoxGeometry } from "./buildBoxGeometry";
@@ -22,13 +24,55 @@ const baseParams: BoxParams = {
   lidHeadroom: 5,
 };
 
-const loader = new STLLoader();
+const stlLoader = new STLLoader();
+const objLoader = new OBJLoader();
 
-function roundtrip(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+function roundtripSTL(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const stl = geometryToSTL(geometry, true);
   expect(stl).toBeInstanceOf(DataView);
   const view = stl as DataView;
-  return loader.parse(view.buffer as ArrayBuffer);
+  return stlLoader.parse(view.buffer as ArrayBuffer);
+}
+
+function roundtripOBJ(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const obj = geometryToOBJ(geometry);
+  const group = objLoader.parse(obj);
+  const mesh = group.children.find((child): child is THREE.Mesh => child instanceof THREE.Mesh);
+  expect(mesh).toBeDefined();
+  return mesh!.geometry;
+}
+
+/**
+ * OBJ face directives reference explicit vertex numbers, which importers
+ * trust as the intended topology rather than re-welding by position
+ * themselves (unlike STL, which is raw triangle soup that gets re-welded by
+ * position on import regardless). So beyond "no gaps" (`countManifoldDefects`
+ * above, position-based), an OBJ export specifically needs every coincident
+ * position to actually share one `v` entry in the *written file* — this
+ * catches the class of bug where CSG leaves adjacent triangles with their
+ * own separate-but-coincident vertex copies at a cut boundary instead of a
+ * shared one.
+ *
+ * This checks the raw OBJ text directly, not a reloaded geometry: three.js's
+ * OBJLoader doesn't preserve `f` lines' vertex-index sharing when it rebuilds
+ * a BufferGeometry (it flattens face-corners into fresh vertices), so
+ * round-tripping through it and inspecting the *result* tests the loader's
+ * reconstruction, not our export.
+ */
+function countDuplicateObjVertices(obj: string): number {
+  const round = (v: number) => Math.round(v * 1000);
+  const seen = new Set<string>();
+  let duplicates = 0;
+
+  for (const line of obj.split("\n")) {
+    if (!line.startsWith("v ")) continue;
+    const [, x, y, z] = line.trim().split(/\s+/);
+    const key = `${round(Number(x))},${round(Number(y))},${round(Number(z))}`;
+    if (seen.has(key)) duplicates++;
+    else seen.add(key);
+  }
+
+  return duplicates;
 }
 
 /**
@@ -113,7 +157,7 @@ describe.each([
   it("box: exports to STL and reloads with a matching bounding box, no NaNs", () => {
     const dims = computeDimensions(params);
     const geometry = buildBoxGeometry(params);
-    const reloaded = roundtrip(geometry);
+    const reloaded = roundtripSTL(geometry);
     const { boundingBox } = assertClean(reloaded);
 
     const size = new THREE.Vector3();
@@ -134,7 +178,7 @@ describe.each([
   it("lid: exports to STL and reloads with a matching bounding box, no NaNs", () => {
     const dims = computeDimensions(params);
     const geometry = buildLidGeometry(params);
-    const reloaded = roundtrip(geometry);
+    const reloaded = roundtripSTL(geometry);
     const { boundingBox } = assertClean(reloaded);
 
     const size = new THREE.Vector3();
@@ -146,5 +190,43 @@ describe.each([
 
     geometry.dispose();
     reloaded.dispose();
+  });
+
+  it("box: exports to OBJ fully vertex-welded, and reloads with a matching bounding box", () => {
+    const dims = computeDimensions(params);
+    const geometry = buildBoxGeometry(params);
+    expect(countDuplicateObjVertices(geometryToOBJ(geometry))).toBe(0);
+
+    const reloaded = roundtripOBJ(geometry);
+    const { boundingBox } = assertClean(reloaded);
+
+    const size = new THREE.Vector3();
+    boundingBox.getSize(size);
+
+    expect(size.x).toBeCloseTo(dims.width, 1);
+    expect(size.z).toBeCloseTo(dims.depth, 1);
+    expect(boundingBox.max.y).toBeGreaterThanOrEqual(dims.totalHeight - EPS);
+    expect(boundingBox.max.y).toBeLessThanOrEqual(dims.totalHeight + EPS);
+    expect(boundingBox.min.y).toBeGreaterThanOrEqual(-EPS);
+
+    geometry.dispose();
+  });
+
+  it("lid: exports to OBJ fully vertex-welded, and reloads with a matching bounding box", () => {
+    const dims = computeDimensions(params);
+    const geometry = buildLidGeometry(params);
+    expect(countDuplicateObjVertices(geometryToOBJ(geometry))).toBe(0);
+
+    const reloaded = roundtripOBJ(geometry);
+    const { boundingBox } = assertClean(reloaded);
+
+    const size = new THREE.Vector3();
+    boundingBox.getSize(size);
+
+    expect(size.x).toBeCloseTo(dims.lidOuterWidth, 1);
+    expect(size.z).toBeCloseTo(dims.lidOuterDepth, 1);
+    expect(size.y).toBeCloseTo(dims.lidOuterHeight, 1);
+
+    geometry.dispose();
   });
 });

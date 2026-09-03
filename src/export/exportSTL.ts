@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { STLExporter } from "three/addons/exporters/STLExporter.js";
-import { fixDrawRangeForExport } from "../geometry/exportFix";
+import { fixDrawRangeForExport, weldVerticesForExport } from "../geometry/exportFix";
 import { triggerDownload } from "./download";
 
 const exporter = new STLExporter();
@@ -10,11 +10,13 @@ export function geometryToSTL(geometry: THREE.BufferGeometry, binary = true): st
   // Clone so the fix-up never mutates the geometry currently on screen.
   const clone = geometry.clone();
   fixDrawRangeForExport(clone);
+  const welded = weldVerticesForExport(clone);
+  clone.dispose();
 
-  const mesh = new THREE.Mesh(clone);
+  const mesh = new THREE.Mesh(welded);
   const data = exporter.parse(mesh, { binary });
 
-  clone.dispose();
+  welded.dispose();
   return data;
 }
 
