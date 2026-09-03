@@ -162,12 +162,17 @@ export interface CameraTrigger {
 function CameraAnimator({
   sceneCenter,
   sceneRadius,
+  maxFar,
   controlsRef,
   triggerRef,
   isProgrammaticUpdate,
 }: {
   sceneCenter: [number, number, number];
   sceneRadius: number;
+  /** Floor for `camera.far` — must cover the full manual-zoom range
+   * (`maxZoomDistance`), not just whatever distance the current blend
+   * happens to be passing through. */
+  maxFar: number;
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
   triggerRef: React.RefObject<CameraTrigger | null>;
   isProgrammaticUpdate: React.RefObject<boolean>;
@@ -284,7 +289,13 @@ function CameraAnimator({
         .copy(target)
         .addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion), distance);
       camera.near = Math.max(0.1, distance - sceneRadius * 3);
-      camera.far = distance + sceneRadius * 3;
+      // Floored at `maxFar`, not just `distance + margin`: this only ever
+      // runs while a blend is *active*, so once it settles, camera.far is
+      // left at whatever this last computed — if that were based on the
+      // blend's transient distance alone, it'd be far too short for
+      // whatever the user zooms out to next via OrbitControls (which goes
+      // all the way to maxZoomDistance and never touches camera.far itself).
+      camera.far = Math.max(distance + sceneRadius * 3, maxFar);
       camera.updateProjectionMatrix();
 
       const controls = controlsRef.current;
@@ -394,6 +405,7 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
       <CameraAnimator
         sceneCenter={sceneCenter}
         sceneRadius={sceneRadius}
+        maxFar={cameraFar}
         controlsRef={controlsRef}
         triggerRef={triggerRef}
         isProgrammaticUpdate={isProgrammaticUpdate}
