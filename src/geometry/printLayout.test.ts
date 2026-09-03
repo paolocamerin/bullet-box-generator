@@ -4,7 +4,7 @@ import type { BoxParams } from "../types";
 import { buildBoxGeometry } from "./buildBoxGeometry";
 import { buildLidGeometry } from "./buildLidGeometry";
 import { computeDimensions } from "./dimensions";
-import { buildPrintLayoutGeometry } from "./printLayout";
+import { buildPrintLayoutGeometry, computePrintLayoutFootprint } from "./printLayout";
 
 const params: BoxParams = {
   columns: 5,
@@ -16,6 +16,7 @@ const params: BoxParams = {
   lidWallThickness: 2,
   lidEngagementHeight: 8,
   lidClearance: 0.03,
+  lidHeadroom: 5,
 };
 
 describe("buildPrintLayoutGeometry", () => {
@@ -96,5 +97,35 @@ describe("buildPrintLayoutGeometry", () => {
     box.dispose();
     lid.dispose();
     layout.dispose();
+  });
+});
+
+describe("computePrintLayoutFootprint", () => {
+  it("matches the actual built layout geometry's bounding box", () => {
+    const dims = computeDimensions(params);
+    const footprint = computePrintLayoutFootprint(dims);
+
+    const box = buildBoxGeometry(params);
+    const lid = buildLidGeometry(params);
+    const layout = buildPrintLayoutGeometry(box, lid, dims);
+    layout.computeBoundingBox();
+    const size = new THREE.Vector3();
+    layout.boundingBox!.getSize(size);
+
+    expect(footprint.width).toBeCloseTo(size.x, 1);
+    expect(footprint.depth).toBeCloseTo(size.y, 1);
+    expect(footprint.height).toBeCloseTo(size.z, 1);
+
+    box.dispose();
+    lid.dispose();
+    layout.dispose();
+  });
+
+  it("grows the width (not the depth) when the grid gets wider", () => {
+    const narrow = computePrintLayoutFootprint(computeDimensions(params));
+    const wide = computePrintLayoutFootprint(computeDimensions({ ...params, columns: 10 }));
+
+    expect(wide.width).toBeGreaterThan(narrow.width);
+    expect(wide.depth).toBeCloseTo(narrow.depth, 5);
   });
 });

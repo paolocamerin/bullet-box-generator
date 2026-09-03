@@ -12,6 +12,7 @@ const baseParams: BoxParams = {
   lidWallThickness: 2,
   lidEngagementHeight: 8,
   lidClearance: 0.03,
+  lidHeadroom: 5,
 };
 
 describe("computeDimensions", () => {
@@ -39,7 +40,9 @@ describe("computeDimensions", () => {
     const dims = computeDimensions(baseParams);
     expect(dims.lidOuterWidth).toBeCloseTo(dims.width);
     expect(dims.lidOuterDepth).toBeCloseTo(dims.depth);
-    expect(dims.lidOuterHeight).toBeCloseTo(baseParams.lidEngagementHeight + baseParams.lidWallThickness);
+    expect(dims.lidOuterHeight).toBeCloseTo(
+      baseParams.lidEngagementHeight + baseParams.lidHeadroom + baseParams.lidWallThickness,
+    );
     expect(dims.lidInnerWidth).toBeCloseTo(dims.width - 2 * baseParams.lidWallThickness);
     expect(dims.lidInnerDepth).toBeCloseTo(dims.depth - 2 * baseParams.lidWallThickness);
     // lid inner size sits exactly `lidClearance` above the box step size

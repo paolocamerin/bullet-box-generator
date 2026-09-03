@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BoxParams } from "../types";
-import { validateParams } from "./validation";
+import { MIN_LID_HEADROOM, validateParams } from "./validation";
 
 const baseParams: BoxParams = {
   columns: 5,
@@ -12,10 +12,11 @@ const baseParams: BoxParams = {
   lidWallThickness: 2,
   lidEngagementHeight: 8,
   lidClearance: 0.03,
+  lidHeadroom: 5,
 };
 
-function errors(params: BoxParams) {
-  return validateParams(params).filter((m) => m.severity === "error");
+function errors(params: BoxParams, maxPlateSize?: number) {
+  return validateParams(params, maxPlateSize).filter((m) => m.severity === "error");
 }
 
 describe("validateParams", () => {
@@ -57,5 +58,22 @@ describe("validateParams", () => {
     const messages = validateParams(baseParams);
     expect(messages.some((m) => m.severity === "warning")).toBe(true);
     expect(errors(baseParams)).toHaveLength(0);
+  });
+
+  it("rejects lid headroom below the minimum", () => {
+    expect(errors({ ...baseParams, lidHeadroom: MIN_LID_HEADROOM - 0.1 }).length).toBeGreaterThan(0);
+  });
+
+  it("allows lid headroom exactly at the minimum", () => {
+    expect(errors({ ...baseParams, lidHeadroom: MIN_LID_HEADROOM })).toHaveLength(0);
+  });
+
+  it("rejects a box footprint larger than the plate size limit", () => {
+    // 60 cols/rows -> ~723mm footprint, over the default 512mm limit.
+    expect(errors({ ...baseParams, columns: 60, rows: 60 }, 512).length).toBeGreaterThan(0);
+  });
+
+  it("respects a custom (raised) plate size limit", () => {
+    expect(errors({ ...baseParams, columns: 60, rows: 60 }, 5000)).toHaveLength(0);
   });
 });

@@ -10,4 +10,5 @@ export const defaultParams: BoxParams = {
   lidWallThickness: 2,
   lidEngagementHeight: 8,
   lidClearance: 0.03,
+  lidHeadroom: 5,
 };

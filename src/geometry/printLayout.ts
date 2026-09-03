@@ -5,6 +5,30 @@ import type { DerivedDimensions } from "./dimensions";
 const PRINT_GAP_RATIO = 0.08;
 const MIN_PRINT_GAP = 10;
 
+function computePrintLayoutGap(dimensions: DerivedDimensions): number {
+  return Math.max(MIN_PRINT_GAP, Math.max(dimensions.width, dimensions.depth) * PRINT_GAP_RATIO);
+}
+
+export interface PrintLayoutFootprint {
+  width: number;
+  depth: number;
+  height: number;
+}
+
+/**
+ * The bed footprint (and build height) the combined box+lid print layout
+ * needs, without actually building the geometry — same gap/offset math as
+ * `buildPrintLayoutGeometry` below, kept in sync since both read from here.
+ */
+export function computePrintLayoutFootprint(dimensions: DerivedDimensions): PrintLayoutFootprint {
+  const gap = computePrintLayoutGap(dimensions);
+  return {
+    width: dimensions.width + gap + dimensions.lidOuterWidth,
+    depth: Math.max(dimensions.depth, dimensions.lidOuterDepth),
+    height: Math.max(dimensions.totalHeight, dimensions.lidOuterHeight),
+  };
+}
+
 /**
  * Re-orients a part authored in this app's internal Y-up convention (holes
  * drilled along +Y) into the Z-up convention slicers assume for STL/OBJ
@@ -40,7 +64,7 @@ export function buildPrintLayoutGeometry(
   const orientedBox = orientForPrint(boxGeometry, false);
   const orientedLid = orientForPrint(lidGeometry, true);
 
-  const gap = Math.max(MIN_PRINT_GAP, Math.max(dimensions.width, dimensions.depth) * PRINT_GAP_RATIO);
+  const gap = computePrintLayoutGap(dimensions);
   const boxOffsetX = -(dimensions.width / 2 + gap / 2);
   const lidOffsetX = dimensions.lidOuterWidth / 2 + gap / 2;
 

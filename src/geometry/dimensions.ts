@@ -37,6 +37,7 @@ export function computeDimensions(params: BoxParams): DerivedDimensions {
     lidWallThickness,
     lidEngagementHeight,
     lidClearance,
+    lidHeadroom,
   } = params;
 
   const width = columns * holeDiameter + (columns + 1) * spacing;
@@ -51,7 +52,10 @@ export function computeDimensions(params: BoxParams): DerivedDimensions {
 
   const lidOuterWidth = width;
   const lidOuterDepth = depth;
-  const lidOuterHeight = lidEngagementHeight + lidWallThickness;
+  // Cavity depth = engagement zone (slides over the box) + headroom above the
+  // box's top face (empty space so ammo ends don't touch the cap) + the cap
+  // itself.
+  const lidOuterHeight = lidEngagementHeight + lidHeadroom + lidWallThickness;
   const lidInnerWidth = width - 2 * lidWallThickness;
   const lidInnerDepth = depth - 2 * lidWallThickness;
 

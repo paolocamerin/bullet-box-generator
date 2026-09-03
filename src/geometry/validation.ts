@@ -11,8 +11,13 @@ export interface ValidationMessage {
 const MIN_PRINTABLE_WALL = 0.4;
 const RECOMMENDED_MIN_CLEARANCE = 0.1;
 const SLOW_HOLE_COUNT = 400;
+export const MIN_LID_HEADROOM = 5;
+export const DEFAULT_MAX_PLATE_SIZE = 512;
 
-export function validateParams(params: BoxParams): ValidationMessage[] {
+export function validateParams(
+  params: BoxParams,
+  maxPlateSize: number = DEFAULT_MAX_PLATE_SIZE,
+): ValidationMessage[] {
   const messages: ValidationMessage[] = [];
 
   if (!Number.isInteger(params.columns) || params.columns < 1) {
@@ -42,6 +47,12 @@ export function validateParams(params: BoxParams): ValidationMessage[] {
   if (params.lidClearance < 0) {
     messages.push({ severity: "error", message: "Lid clearance cannot be negative." });
   }
+  if (params.lidHeadroom < MIN_LID_HEADROOM) {
+    messages.push({
+      severity: "error",
+      message: `Lid headroom must be at least ${MIN_LID_HEADROOM}mm — this is the vertical clearance above the ammo so it doesn't touch the lid.`,
+    });
+  }
 
   // The remaining checks depend on the fields above being sane; bail out early
   // rather than reporting confusing derived-dimension errors on top.
@@ -58,6 +69,17 @@ export function validateParams(params: BoxParams): ValidationMessage[] {
   }
 
   const dims = computeDimensions(params);
+
+  // Guardrail against oversized models hanging or crashing the tab (CSG runs
+  // on the main thread). Box and lid footprints share the same W x D, so
+  // checking the box's is enough to cover both parts.
+  if (dims.width > maxPlateSize || dims.depth > maxPlateSize) {
+    messages.push({
+      severity: "error",
+      message: `Box footprint (${dims.width.toFixed(0)} × ${dims.depth.toFixed(0)}mm) exceeds the ${maxPlateSize}mm plate size limit. Reduce the grid/spacing, or raise the limit in Settings.`,
+    });
+    return messages;
+  }
 
   if (dims.stepWidth <= 0 || dims.stepDepth <= 0) {
     messages.push({

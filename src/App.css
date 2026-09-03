@@ -10,10 +10,34 @@
   min-width: 0;
 }
 
-.regenerating-badge {
+.settings-trigger {
   position: absolute;
   top: 16px;
   left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  background: rgba(20, 22, 27, 0.85);
+  border: 1px solid #2e323b;
+  color: #c3c8d1;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.settings-trigger:hover {
+  border-color: #3d4250;
+  color: #f2f3f5;
+}
+
+.regenerating-badge {
+  position: absolute;
+  top: 16px;
+  left: 64px;
   padding: 6px 12px;
   border-radius: 6px;
   background: rgba(20, 22, 27, 0.85);
@@ -233,9 +257,230 @@
   cursor: not-allowed;
 }
 
-.export-hint {
+.export-hint,
+.settings-hint {
   margin: 0;
   font-size: 11.5px;
   line-height: 1.4;
   color: #6b7280;
+}
+
+.preset-row {
+  display: flex;
+  gap: 8px;
+}
+
+.preset-row select,
+.preset-name-input {
+  flex: 1;
+  min-width: 0;
+  background: #1c1f26;
+  border: 1px solid #2c303a;
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: #f2f3f5;
+  font-size: 12.5px;
+}
+
+.preset-row select:focus,
+.preset-name-input:focus {
+  outline: none;
+  border-color: #5b8def;
+}
+
+.preset-delete,
+.preset-save {
+  padding: 6px 10px;
+  border-radius: 5px;
+  border: 1px solid #2c303a;
+  background: #1c1f26;
+  color: #c3c8d1;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.preset-delete:hover:not(:disabled),
+.preset-save:hover:not(:disabled) {
+  border-color: #3d4250;
+}
+
+.preset-delete:disabled,
+.preset-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.preset-reset,
+.preset-update {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 5px;
+  border: 1px solid #2c303a;
+  background: #1c1f26;
+  color: #c3c8d1;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.preset-reset:hover,
+.preset-update:hover {
+  border-color: #3d4250;
+}
+
+.preset-update {
+  border-color: #5a4a1f;
+  background: #26210f;
+  color: #e2c98a;
+}
+
+.preset-update:hover {
+  border-color: #7a6329;
+}
+
+.cookie-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: #14161b;
+  border-top: 1px solid #2c303a;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.cookie-banner p {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #c3c8d1;
+}
+
+.cookie-banner-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cookie-banner-actions button {
+  padding: 9px 18px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #2c303a;
+}
+
+.cookie-decline {
+  background: #1c1f26;
+  color: #c3c8d1;
+}
+
+.cookie-decline:hover {
+  border-color: #3d4250;
+}
+
+.cookie-accept {
+  background: #5b8def;
+  border-color: #5b8def;
+  color: #0f1115;
+}
+
+.cookie-accept:hover {
+  background: #6f9af2;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 9, 11, 0.6);
+}
+
+.modal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  background: #14161b;
+  border: 1px solid #2c303a;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  padding: 20px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f2f3f5;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: #9aa2af;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  border-color: #2c303a;
+  color: #f2f3f5;
+}
+
+.modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid #21242b;
+}
+
+.modal-section:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.modal-section h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.cookie-status {
+  margin: 0;
+  font-size: 12.5px;
+  color: #c3c8d1;
+}
+
+.cookie-status strong {
+  color: #f2f3f5;
+  text-transform: capitalize;
 }

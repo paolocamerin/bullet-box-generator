@@ -3,7 +3,7 @@ import type * as THREE from "three";
 import { buildBoxGeometry } from "../geometry/buildBoxGeometry";
 import { buildLidGeometry } from "../geometry/buildLidGeometry";
 import { computeDimensions, type DerivedDimensions } from "../geometry/dimensions";
-import { validateParams, type ValidationMessage } from "../geometry/validation";
+import { DEFAULT_MAX_PLATE_SIZE, validateParams, type ValidationMessage } from "../geometry/validation";
 import type { BoxParams } from "../types";
 
 const DEBOUNCE_MS = 200;
@@ -22,7 +22,10 @@ function useDisposableGeometry(geometry: THREE.BufferGeometry | null) {
   }, [geometry]);
 }
 
-export function useGeneratedModel(params: BoxParams): GeneratedModel {
+export function useGeneratedModel(
+  params: BoxParams,
+  maxPlateSize: number = DEFAULT_MAX_PLATE_SIZE,
+): GeneratedModel {
   const [debounced, setDebounced] = useState(params);
 
   useEffect(() => {
@@ -31,7 +34,10 @@ export function useGeneratedModel(params: BoxParams): GeneratedModel {
   }, [params]);
 
   const dimensions = useMemo(() => computeDimensions(debounced), [debounced]);
-  const validation = useMemo(() => validateParams(debounced), [debounced]);
+  const validation = useMemo(
+    () => validateParams(debounced, maxPlateSize),
+    [debounced, maxPlateSize],
+  );
   const hasError = validation.some((m) => m.severity === "error");
 
   const boxGeometry = useMemo<THREE.BufferGeometry | null>(() => {

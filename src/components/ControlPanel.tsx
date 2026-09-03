@@ -1,15 +1,22 @@
 import type * as THREE from "three";
 import type { DerivedDimensions } from "../geometry/dimensions";
+import { computePrintLayoutFootprint } from "../geometry/printLayout";
+import { MIN_LID_HEADROOM } from "../geometry/validation";
 import type { ValidationMessage } from "../geometry/validation";
-import type { BoxParams, ViewMode } from "../types";
+import type { BoxParams, Preset, ViewMode } from "../types";
 import { DerivedStat } from "./controls/DerivedStat";
 import { NumberField } from "./controls/NumberField";
 import { Section } from "./controls/Section";
 import { ExportButtons } from "./ExportButtons";
+import { PresetsSection } from "./PresetsSection";
 
 interface ControlPanelProps {
   params: BoxParams;
   onChange: (patch: Partial<BoxParams>) => void;
+  presets: Preset[];
+  onLoadPreset: (params: BoxParams) => void;
+  onSavePreset: (name: string) => void;
+  onDeletePreset: (name: string) => void;
   dimensions: DerivedDimensions;
   validation: ValidationMessage[];
   viewMode: ViewMode;
@@ -23,6 +30,10 @@ const fmt = (n: number) => `${n.toFixed(2)} mm`;
 export function ControlPanel({
   params,
   onChange,
+  presets,
+  onLoadPreset,
+  onSavePreset,
+  onDeletePreset,
   dimensions,
   validation,
   viewMode,
@@ -31,6 +42,7 @@ export function ControlPanel({
   lidGeometry,
 }: ControlPanelProps) {
   const hasError = validation.some((m) => m.severity === "error");
+  const printLayout = computePrintLayoutFootprint(dimensions);
 
   return (
     <aside className="panel">
@@ -38,6 +50,14 @@ export function ControlPanel({
         <h1>Bullet Box Generator</h1>
         <p>Parametric ammo block with a press-fit lid, ready for STL/OBJ export.</p>
       </header>
+
+      <PresetsSection
+        params={params}
+        presets={presets}
+        onLoad={onLoadPreset}
+        onSave={onSavePreset}
+        onDelete={onDeletePreset}
+      />
 
       <Section title="Grid">
         <NumberField
@@ -119,6 +139,14 @@ export function ControlPanel({
           unit="mm"
           onChange={(v) => onChange({ lidClearance: v })}
         />
+        <NumberField
+          label="Headroom above ammo"
+          value={params.lidHeadroom}
+          min={MIN_LID_HEADROOM}
+          step={0.5}
+          unit="mm"
+          onChange={(v) => onChange({ lidHeadroom: v })}
+        />
       </Section>
 
       <Section title="Derived dimensions">
@@ -131,6 +159,10 @@ export function ControlPanel({
         <DerivedStat
           label="Lid outer size"
           value={`${fmt(dimensions.lidOuterWidth)} × ${fmt(dimensions.lidOuterDepth)} × ${fmt(dimensions.lidOuterHeight)}`}
+        />
+        <DerivedStat
+          label="Print layout size"
+          value={`${fmt(printLayout.width)} × ${fmt(printLayout.depth)} × ${fmt(printLayout.height)}`}
         />
         <DerivedStat label="Holes" value={`${dimensions.holeCount}`} />
       </Section>
