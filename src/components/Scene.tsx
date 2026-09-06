@@ -54,6 +54,31 @@ const POLE_EPSILON = THREE.MathUtils.degToRad(2);
 const MIN_ZOOM = 0.6; // max zoom-out limit
 const MAX_ZOOM = 6; // max zoom-in limit
 
+// drei's OrbitControls defaults `enableDamping` to true but leaves
+// `dampingFactor` at three.js's own default of 0.05 — a slow, floaty decay
+// (~1s to settle) that reads as "inertia" after releasing a drag. Higher =
+// snappier/less glide, lower = more momentum; 1 disables the smoothing
+// entirely (settles in a single frame).
+const DAMPING_FACTOR = 0.25;
+
+// The <Grid>'s own fade-out distance (world units from the camera's ground
+// projection) — see GRID_FADE_MARGIN's comment for why the camera's `far`
+// plane needs to know this value too.
+const GRID_FADE_DISTANCE = 600;
+// drei's <Grid>, with `infiniteGrid`, scales its actual plane geometry to
+// `planeSize * (1 + fadeDistance)` in its vertex shader — with our fadeDistance
+// this is a many-thousand-unit plane — but its fragment shader smoothly fades
+// it to fully transparent (alpha discarded) exactly at `dist = fadeDistance`.
+// The camera's `far` plane used to be computed purely from the *model's* size
+// (orbitRadius/sceneRadius), completely independent of this — for a small
+// grid/model, `far` could end up smaller than GRID_FADE_DISTANCE, hard-
+// clipping the grid mid-fade well before the shader's own smooth fade
+// completes. Looks exactly like an abrupt cutoff instead of a fade. `far`
+// must always comfortably exceed GRID_FADE_DISTANCE, regardless of model
+// size — the 20% margin keeps the hard clip a bit past the point where the
+// grid is already fully transparent, rather than exactly at that boundary.
+const GRID_FADE_MARGIN = 1.2;
+
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
@@ -169,8 +194,10 @@ function OrthographicSceneCamera({
   // whatever it's looking at is therefore a fixed invariant for the whole
   // session (barring a view-mode-triggered reframe) — near/far only need to
   // safely bound that one frozen `orbitRadius`, not track anything live.
+  // Also floored at the Grid's own fade distance (see GRID_FADE_MARGIN) so
+  // the ground grid isn't hard-clipped mid-fade for small models.
   const near = 0.1;
-  const far = orbitRadius + sceneRadius * 4 + 200;
+  const far = Math.max(orbitRadius + sceneRadius * 4 + 200, GRID_FADE_DISTANCE * GRID_FADE_MARGIN);
 
   // `zoom` is a plain three.js camera scalar, not something `position`-style
   // prop-diffing can "reset on trigger" (a hardcoded literal prop never
@@ -220,8 +247,10 @@ function PerspectiveSceneCamera({
   orbitRadius: number;
   sceneRadius: number;
 }) {
+  // Floored at the Grid's own fade distance — see GRID_FADE_MARGIN's comment
+  // on the orthographic camera above (same reasoning applies here).
   const near = 0.1;
-  const far = orbitRadius + sceneRadius * 4 + 200;
+  const far = Math.max(orbitRadius + sceneRadius * 4 + 200, GRID_FADE_DISTANCE * GRID_FADE_MARGIN);
 
   return (
     <PerspectiveCamera ref={cameraRef} position={initialPosition} fov={NORMAL_FOV} near={near} far={far} />
@@ -580,7 +609,7 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode, projecti
         cellSize={10}
         sectionSize={50}
         infiniteGrid
-        fadeDistance={600}
+        fadeDistance={GRID_FADE_DISTANCE}
         cellColor="#3a3f47"
         sectionColor="#565f6b"
       />
@@ -590,6 +619,7 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode, projecti
         ref={controlsRef}
         makeDefault
         target={sceneCenter}
+        dampingFactor={DAMPING_FACTOR}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         minDistance={minDistance}
