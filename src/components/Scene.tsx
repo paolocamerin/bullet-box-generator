@@ -1,4 +1,4 @@
-import { GizmoHelper, GizmoViewcube, Grid, OrbitControls } from "@react-three/drei";
+import { GizmoHelper, GizmoViewcube, OrbitControls } from "@react-three/drei";
 import { Canvas, type Camera as R3FCamera, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -6,6 +6,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { DerivedDimensions } from "../geometry/dimensions";
 import type { ProjectionMode, ViewMode } from "../types";
 import { BoxMesh } from "./BoxMesh";
+import { InfiniteGrid } from "./InfiniteGrid";
 import { LidMesh } from "./LidMesh";
 
 interface SceneProps {
@@ -85,6 +86,15 @@ const GRID_FADE_MARGIN = 1.2;
 // depth-buffer precision is linear across [near, far] (unlike perspective's
 // near-weighted precision), so going this small is safe here.
 const ORTHOGRAPHIC_NEAR = 0.001;
+
+// Even with ORTHOGRAPHIC_NEAR pushed down to 0.001, the boundary is still a
+// hard clip — floating-point precision right at that edge can still leave a
+// visible seam as the grazing-transition line (see above) sweeps across the
+// screen. Rather than chase the near plane closer to zero, InfiniteGrid
+// fades its own alpha to 0 as camera-space depth approaches `near`, over
+// this many world units, so the seam disappears into a soft fade instead of
+// a hard edge — symmetric with the existing far-distance fade.
+const GRID_NEAR_FADE_RANGE = 20;
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
@@ -675,13 +685,13 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode, projecti
       <ambientLight intensity={0.6} />
       <ShadowLight center={sceneCenter} radius={sceneRadius} />
       <directionalLight position={[-120, 80, -100]} intensity={0.3} />
-      <Grid
+      <InfiniteGrid
         position={[0, -0.01, 0]}
         args={[10, 10]}
         cellSize={10}
         sectionSize={50}
-        infiniteGrid
         fadeDistance={GRID_FADE_DISTANCE}
+        nearFadeRange={GRID_NEAR_FADE_RANGE}
         cellColor="#3a3f47"
         sectionColor="#565f6b"
       />
