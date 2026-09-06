@@ -14,19 +14,22 @@ import { defaultSettings } from "./state/defaultSettings";
 import type { AppSettings, BoxParams, CookieConsent, Preset, ProjectionMode, ViewMode } from "./types";
 
 function App() {
-  const [storedParams, setParams] = useLocalStorage<BoxParams>("bullet-box:params", defaultParams);
+  const [storedParams, setParams] = useLocalStorage<BoxParams>(
+    "box-generator:params",
+    defaultParams,
+  );
   const [storedSettings, setSettings] = useLocalStorage<AppSettings>(
-    "bullet-box:settings",
+    "box-generator:settings",
     defaultSettings,
   );
-  const [viewMode, setViewMode] = useLocalStorage<ViewMode>("bullet-box:view-mode", "assembled");
+  const [viewMode, setViewMode] = useLocalStorage<ViewMode>("box-generator:view-mode", "assembled");
   const [projectionMode, setProjectionMode] = useLocalStorage<ProjectionMode>(
-    "bullet-box:projection-mode",
+    "box-generator:projection-mode",
     "perspective",
   );
-  const [presets, setPresets] = useLocalStorage<Preset[]>("bullet-box:presets", []);
+  const [presets, setPresets] = useLocalStorage<Preset[]>("box-generator:presets", []);
   const [cookieConsent, setCookieConsent] = useLocalStorage<CookieConsent>(
-    "bullet-box:cookie-consent",
+    "box-generator:cookie-consent",
     "unset",
   );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);

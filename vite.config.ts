@@ -5,6 +5,6 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   // GitHub Pages project sites are served from /<repo-name>/, so asset URLs
   // need that prefix baked in at build time.
-  base: '/bullet-box-generator/',
+  base: '/box-generator/',
   plugins: [react()],
 })

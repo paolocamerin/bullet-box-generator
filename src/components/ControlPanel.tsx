@@ -47,8 +47,8 @@ export function ControlPanel({
   return (
     <aside className="panel">
       <header className="panel-header">
-        <h1>Bullet Box Generator</h1>
-        <p>Parametric ammo block with a press-fit lid, ready for STL/OBJ export.</p>
+        <h1>Box Generator</h1>
+        <p>Parametric grid-tray box with a press-fit lid, ready for STL/OBJ export.</p>
       </header>
 
       <PresetsSection

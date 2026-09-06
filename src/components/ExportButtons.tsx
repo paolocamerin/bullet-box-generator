@@ -27,7 +27,7 @@ export function ExportButtons({ boxGeometry, lidGeometry, dimensions, disabled }
   function downloadCombined() {
     if (!boxGeometry || !lidGeometry) return;
     const combined = buildPrintLayoutGeometry(boxGeometry, lidGeometry, dimensions);
-    download(combined, "bullet-box-print-layout");
+    download(combined, "box-print-layout");
     combined.dispose();
   }
 
@@ -43,13 +43,13 @@ export function ExportButtons({ boxGeometry, lidGeometry, dimensions, disabled }
       <div className="export-actions">
         <button
           disabled={disabled || !boxGeometry}
-          onClick={() => boxGeometry && download(boxGeometry, "bullet-box")}
+          onClick={() => boxGeometry && download(boxGeometry, "box")}
         >
           Download Box
         </button>
         <button
           disabled={disabled || !lidGeometry}
-          onClick={() => lidGeometry && download(lidGeometry, "bullet-box-lid")}
+          onClick={() => lidGeometry && download(lidGeometry, "lid")}
         >
           Download Lid
         </button>
