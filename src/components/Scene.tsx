@@ -1,12 +1,5 @@
-import {
-  GizmoHelper,
-  GizmoViewcube,
-  Grid,
-  OrbitControls,
-  OrthographicCamera,
-  PerspectiveCamera,
-} from "@react-three/drei";
-import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
+import { GizmoHelper, GizmoViewcube, Grid, OrbitControls } from "@react-three/drei";
+import { Canvas, type Camera as R3FCamera, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -79,6 +72,20 @@ const GRID_FADE_DISTANCE = 600;
 // grid is already fully transparent, rather than exactly at that boundary.
 const GRID_FADE_MARGIN = 1.2;
 
+// For a point on an extended ground plane, camera-space depth (distance
+// along the view axis) approaches zero right at the "grazing transition"
+// line where the plane crosses from in-front-of to behind-the-camera — this
+// can happen at large *world-space* distances depending on viewing angle.
+// In perspective mode that region sits outside the narrow FOV cone, so it's
+// never visible regardless of the near plane. In orthographic mode the
+// frustum is a rectangular box that doesn't narrow with depth, so that same
+// near-zero-depth strip IS inside the visible frame — with too large a near
+// plane, it gets hard-clipped right there, looking like the grid abruptly
+// disappearing as it sweeps toward the camera. An orthographic camera's
+// depth-buffer precision is linear across [near, far] (unlike perspective's
+// near-weighted precision), so going this small is safe here.
+const ORTHOGRAPHIC_NEAR = 0.001;
+
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
@@ -148,12 +155,22 @@ function ShadowLight({ center, radius }: { center: [number, number, number]; rad
 }
 
 /**
- * The orthographic view camera. First-class support in both `OrbitControls`
- * (dollies via `camera.zoom`, clamped by `minZoom`/`maxZoom`, calling
- * `updateProjectionMatrix()` itself) and drei's own `<OrthographicCamera>`
- * (which re-calls `updateProjectionMatrix()` on every render, handling the
- * same declarative-prop-mutation gotcha `ShadowLight` above needs an
- * explicit `useEffect` for).
+ * The orthographic view camera. Raw `<orthographicCamera>` JSX intrinsic,
+ * not drei's `<OrthographicCamera>` wrapper — see the note on
+ * `PerspectiveSceneCamera` below for why we dropped it in favor of doing
+ * this ourselves.
+ *
+ * `manual` is load-bearing, not decorative: R3F's own core store subscribes
+ * to size/dpr changes and, for whichever camera is currently `state.camera`,
+ * runs its own internal `updateCamera()` on *every* resize — for an
+ * orthographic camera that means forcibly overwriting left/right/top/bottom
+ * with raw *pixel*-unit values (`size.width/-2` etc — see
+ * `node_modules/@react-three/fiber`'s `updateCamera()`), completely
+ * clobbering our own world-unit framing below. Setting `camera.manual = true`
+ * is R3F's own documented escape hatch for exactly this ("don't mess with a
+ * camera that belongs to the user" — traces to a real, referenced R3F issue
+ * in that function's source) and is what was missing — this is the actual
+ * fix for "resizing the window squishes the geometry until you refresh."
  *
  * `initialPosition`/`orbitRadius` are frozen per view-mode switch (see
  * `Scene`, keyed on `[viewMode]`) — not on every dimension tweak — so the
@@ -192,11 +209,11 @@ function OrthographicSceneCamera({
   // mutates `camera.zoom` — it never moves `camera.position`. Combined with
   // orbit/pan preserving distance-to-target, the camera's distance from
   // whatever it's looking at is therefore a fixed invariant for the whole
-  // session (barring a view-mode-triggered reframe) — near/far only need to
+  // session (barring a view-mode-triggered reframe) — far only needs to
   // safely bound that one frozen `orbitRadius`, not track anything live.
   // Also floored at the Grid's own fade distance (see GRID_FADE_MARGIN) so
   // the ground grid isn't hard-clipped mid-fade for small models.
-  const near = 0.1;
+  const near = ORTHOGRAPHIC_NEAR;
   const far = Math.max(orbitRadius + sceneRadius * 4 + 200, GRID_FADE_DISTANCE * GRID_FADE_MARGIN);
 
   // `zoom` is a plain three.js camera scalar, not something `position`-style
@@ -214,8 +231,29 @@ function OrthographicSceneCamera({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]);
 
+  // R3F's generic prop application (verified directly in its `applyProps`
+  // source: every camera prop just falls through to a plain
+  // `root[key] = value` assignment) never calls `updateProjectionMatrix()`
+  // for any camera property — without this, left/right/top/bottom would be
+  // set on the object but the cached projection matrix would never actually
+  // recompute, so changes would silently never take visual effect.
+  //
+  // Also where `.manual` gets set (see the class doc comment for why) —
+  // imperatively rather than as a JSX prop, since it's a runtime-only R3F
+  // convention (`camera.manual`, checked by `updateCamera()`), not a real
+  // three.js camera property, so it isn't part of the auto-generated JSX
+  // intrinsic's prop types (which are derived purely from the three.js
+  // class's own properties). `R3FCamera` is R3F's own public type for
+  // exactly this — a plain camera intersected with `{ manual?: boolean }`.
+  useLayoutEffect(() => {
+    const camera = cameraRef.current as R3FCamera | null;
+    if (!camera) return;
+    camera.manual = true;
+    camera.updateProjectionMatrix();
+  });
+
   return (
-    <OrthographicCamera
+    <orthographicCamera
       ref={cameraRef}
       position={initialPosition}
       left={-halfWidth}
@@ -235,6 +273,17 @@ function OrthographicSceneCamera({
  * (distance-based, via `minDistance`/`maxDistance`), which the reactive
  * `position` prop already resets correctly on a view-mode change — no
  * separate imperative reset effect needed, unlike the orthographic case.
+ *
+ * Raw `<perspectiveCamera>` intrinsic rather than drei's `<PerspectiveCamera>`
+ * wrapper: once both cameras need `manual` (see the orthographic camera's
+ * comment — this is what actually fixes the resize bug) drei's own
+ * auto-`aspect` logic gets disabled too, since it shares the exact same
+ * `props.manual` check internally — so we'd have to compute `aspect`
+ * ourselves regardless. At that point the wrapper's only remaining
+ * contribution was calling `updateProjectionMatrix()` once per render — one
+ * line, easy to just do directly (see the `useLayoutEffect` below) — so
+ * dropping the wrapper removes a layer instead of fighting it, and makes
+ * every projection-matrix update explicit and visible in this file.
  */
 function PerspectiveSceneCamera({
   cameraRef,
@@ -247,13 +296,36 @@ function PerspectiveSceneCamera({
   orbitRadius: number;
   sceneRadius: number;
 }) {
+  const { width, height } = useThree((state) => state.size);
+  const aspect = height > 0 ? width / height : 1;
+
   // Floored at the Grid's own fade distance — see GRID_FADE_MARGIN's comment
   // on the orthographic camera above (same reasoning applies here).
   const near = 0.1;
   const far = Math.max(orbitRadius + sceneRadius * 4 + 200, GRID_FADE_DISTANCE * GRID_FADE_MARGIN);
 
+  // See OrthographicSceneCamera's comment for the full reasoning on both the
+  // `.manual` assignment and the `updateProjectionMatrix()` call. Strictly,
+  // `manual` is less critical here — R3F's own fallback for a perspective
+  // camera computes the identical `aspect` formula we do — but setting it
+  // keeps both cameras on the same fully-self-contained pattern rather than
+  // one relying on R3F's internal behavior and the other not.
+  useLayoutEffect(() => {
+    const camera = cameraRef.current as R3FCamera | null;
+    if (!camera) return;
+    camera.manual = true;
+    camera.updateProjectionMatrix();
+  });
+
   return (
-    <PerspectiveCamera ref={cameraRef} position={initialPosition} fov={NORMAL_FOV} near={near} far={far} />
+    <perspectiveCamera
+      ref={cameraRef}
+      position={initialPosition}
+      fov={NORMAL_FOV}
+      aspect={aspect}
+      near={near}
+      far={far}
+    />
   );
 }
 

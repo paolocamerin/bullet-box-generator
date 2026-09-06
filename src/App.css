@@ -12,8 +12,8 @@
 
 .settings-trigger {
   position: absolute;
-  top: 16px;
-  left: 16px;
+  top: 32px;
+  left: 32px;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -36,8 +36,8 @@
 
 .projection-toggle-group {
   position: absolute;
-  right: 16px;
-  bottom: 148px;
+  right: 32px;
+  top: 32px;
   z-index: 10;
   display: flex;
   align-items: center;
