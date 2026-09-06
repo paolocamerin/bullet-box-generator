@@ -520,3 +520,26 @@
   color: #f2f3f5;
   text-transform: capitalize;
 }
+
+/* Below this width, stack the canvas above the panel instead of side by
+   side, so the canvas stays visible while the panel scrolls. The modal
+   backdrop uses `position: fixed; inset: 0`, so it already overlays and
+   centers on the full browser viewport regardless of this layout change. */
+@media (max-width: 768px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .viewport {
+    flex: 0 0 50%;
+    width: 100%;
+  }
+
+  .panel {
+    width: 100%;
+    height: auto;
+    flex: 1 1 auto;
+    border-left: none;
+    border-top: 1px solid #22252c;
+  }
+}
