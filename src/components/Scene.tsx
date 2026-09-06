@@ -1,5 +1,5 @@
-import { GizmoHelper, GizmoViewcube, Grid, OrbitControls } from "@react-three/drei";
-import { Canvas, type ThreeEvent, useFrame } from "@react-three/fiber";
+import { GizmoHelper, GizmoViewcube, Grid, OrbitControls, OrthographicCamera } from "@react-three/drei";
+import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
@@ -21,18 +21,26 @@ const LIGHT_DIRECTION = { x: 0.5136, y: 0.7534, z: 0.4109 }; // normalized (150,
 // which is also the order GizmoViewcube indexes its `faces` labels by.
 const AXIS_FACE_LABELS = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"];
 
-// "Faux-orthographic": rather than swapping to a real THREE.OrthographicCamera
-// (a discontinuous cut — its parameters, world-space left/right/top/bottom,
-// have no continuous path to a perspective camera's fov+distance), we shrink
-// the perspective camera's FOV toward zero while pulling it back to keep the
-// model's apparent size constant. In the limit that's mathematically true
-// orthographic; at a few degrees it's visually indistinguishable, and it
-// stays the *same* camera object throughout, so every transition — face
-// click, edge/corner click, manual drag — is just a continuous blend of the
-// same few numbers instead of a camera swap.
-const NORMAL_FOV = 40;
-const FLATTENED_FOV = 4;
 const BLEND_DURATION = 0.45; // seconds
+
+// OrbitControls forcibly calls `object.lookAt(target)` at the end of every
+// single internal update() (verified in three.js's OrbitControls source) —
+// so a view direction sitting exactly on the +/-Y pole collides with
+// Object3D.lookAt()'s well-known singularity (undefined roll when the view
+// direction is parallel to `camera.up`), producing an unstable/snapping
+// orientation once that forced lookAt takes over. Nudging by a couple of
+// degrees is visually indistinguishable from true top-down but avoids the
+// singularity entirely; used both for OrbitControls' own polar-angle clamp
+// (manual dragging near the poles) and for the gizmo's Y+/Y- click targets,
+// so neither ever asks for the exact pole in the first place.
+const POLE_EPSILON = THREE.MathUtils.degToRad(2);
+
+// Dimensionless multipliers on the "fit" framing established by the camera's
+// frustum bounds (zoom=1 exactly frames the model) — unlike the old
+// perspective-distance system, these don't need to scale with model size,
+// since the frustum itself is already normalized to sceneRadius/aspect.
+const MIN_ZOOM = 0.6; // max zoom-out limit
+const MAX_ZOOM = 6; // max zoom-in limit
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
@@ -103,18 +111,88 @@ function ShadowLight({ center, radius }: { center: [number, number, number]; rad
 }
 
 /**
- * The clickable cube widget. Must be rendered inside `<GizmoHelper>` so
- * `useGizmoContext` would resolve if we used it — we don't: drei's own
- * `tweenCamera` only rotates whatever camera is currently active and has no
- * notion of "flatten", so face and edge/corner clicks both go through our
- * own `onDirectionClick`, which drives everything (rotation + flatten
- * amount) as one continuous blend on `CameraAnimator` below.
+ * The main view camera. Orthographic-only (no perspective) — first-class
+ * support in both `OrbitControls` (dollies via `camera.zoom` for ortho
+ * cameras, clamped by `minZoom`/`maxZoom`, calling `updateProjectionMatrix()`
+ * itself) and drei's own `<OrthographicCamera>` (which re-calls
+ * `updateProjectionMatrix()` on every render, handling the same
+ * declarative-prop-mutation gotcha `ShadowLight` above needs an explicit
+ * `useEffect` for).
+ *
+ * `initialPosition`/`orbitRadius` are frozen per view-mode switch (see
+ * `Scene`, keyed on `[viewMode]`) — not on every dimension tweak — so the
+ * camera gets a sensible fresh framing when the layout drastically changes
+ * (assembled/exploded/side-by-side sit at very different scales/offsets),
+ * but never yanks itself out from under an ordinary slider adjustment or a
+ * manual orbit/zoom the user is mid-way through.
  */
-function ViewCubeFaces({
-  onDirectionClick,
+function SceneCamera({
+  initialPosition,
+  orbitRadius,
+  sceneRadius,
+  viewMode,
 }: {
-  onDirectionClick: (direction: THREE.Vector3, flatten: boolean) => void;
+  initialPosition: [number, number, number];
+  orbitRadius: number;
+  sceneRadius: number;
+  viewMode: ViewMode;
 }) {
+  const cameraRef = useRef<THREE.OrthographicCamera>(null);
+  const { width, height } = useThree((state) => state.size);
+  const aspect = height > 0 ? width / height : 1;
+
+  // Fit a sphere of this radius in the viewport regardless of aspect: the
+  // *smaller* screen dimension is the constraining one.
+  const frustumHalf = sceneRadius * 1.15;
+  const halfHeight = frustumHalf / Math.min(1, aspect);
+  const halfWidth = frustumHalf * Math.max(1, aspect);
+
+  // Orthographic zoom (OrbitControls, verified in its source) only ever
+  // mutates `camera.zoom` — it never moves `camera.position`. Combined with
+  // orbit/pan preserving distance-to-target, the camera's distance from
+  // whatever it's looking at is therefore a fixed invariant for the whole
+  // session (barring a view-mode-triggered reframe) — near/far only need to
+  // safely bound that one frozen `orbitRadius`, not track anything live.
+  const near = 0.1;
+  const far = orbitRadius + sceneRadius * 4 + 200;
+
+  // `zoom` is a plain three.js camera scalar, not something `position`-style
+  // prop-diffing can "reset on trigger" (a hardcoded literal prop never
+  // differs from its own previous value, so R3F never reapplies it past the
+  // first mount) — an explicit imperative effect is required to reset it
+  // alongside the position reframe whenever the view mode changes, so a
+  // stale zoom level doesn't make the freshly-reframed model look
+  // unexpectedly tiny or huge.
+  useEffect(() => {
+    if (cameraRef.current) {
+      cameraRef.current.zoom = 1;
+      cameraRef.current.updateProjectionMatrix();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
+
+  return (
+    <OrthographicCamera
+      ref={cameraRef}
+      makeDefault
+      position={initialPosition}
+      left={-halfWidth}
+      right={halfWidth}
+      top={halfHeight}
+      bottom={-halfHeight}
+      near={near}
+      far={far}
+    />
+  );
+}
+
+/**
+ * The clickable cube widget. Reports the raw, honest clicked-face/edge/
+ * corner direction — any adjustment for OrbitControls compatibility (the
+ * pole nudge, same-face flip) belongs in `CameraAnimator`, which owns the
+ * actual camera-motion concerns.
+ */
+function ViewCubeFaces({ onDirectionClick }: { onDirectionClick: (direction: THREE.Vector3) => void }) {
   function handleClick(event: ThreeEvent<MouseEvent>) {
     event.stopPropagation();
     // The main cube's faces sit at local position (0,0,0); drei's edge/corner
@@ -132,7 +210,7 @@ function ViewCubeFaces({
     // *is* that diagonal — matches what drei's own default EdgeCube handler
     // uses internally.
     const direction = isMainFace && event.face ? event.face.normal.clone() : event.object.position.clone();
-    onDirectionClick(direction.normalize(), isMainFace);
+    onDirectionClick(direction.normalize());
     return null;
   }
 
@@ -140,39 +218,35 @@ function ViewCubeFaces({
 }
 
 export interface CameraTrigger {
-  /** Rotate to look along `direction`, and blend flatten to the given amount. */
-  snapTo: (direction: THREE.Vector3, flatten: boolean) => void;
-  /** Blend flatten back to normal perspective without touching orientation —
-   * used when the user starts a manual drag, so it doesn't fight the drag by
-   * also trying to reorient the camera. */
-  unflatten: () => void;
+  /** Rotate to look along `direction`, preserving the current orbit distance. */
+  snapTo: (direction: THREE.Vector3) => void;
+  /** Stop an in-progress snap immediately — used when the user starts a real
+   * drag, so it doesn't fight the drag by continuing to reorient the camera. */
+  cancelBlend: () => void;
 }
 
 /**
- * Drives every camera transition as continuous blends on a single persistent
- * PerspectiveCamera: orientation (quaternion slerp) and "flatten" amount
- * (fov, with distance recomputed each frame to keep the model's apparent
- * size constant) are independent channels, each easing from wherever it
- * currently is to a new target over a fixed duration — independent because a
- * manual drag needs to un-flatten *without* also fighting the user's own
- * rotation. Runs entirely on refs inside `useFrame` — no React state, no
- * re-renders — which is also why it isn't laggy: nothing here waits on a
- * render cycle.
+ * Animates only camera *orientation* — a single quaternion slerp, holding
+ * orbit radius constant throughout. No fov, no near/far, no per-frame
+ * distance recompute: none of that coupling exists for an orthographic
+ * camera, which is the whole point of going orthographic-only (see the plan
+ * doc's "Camera & Gizmo Rework" section for the fuller why).
+ *
+ * Deliberately doesn't call drei's own `GizmoHelper.tweenCamera` — traced its
+ * source (installed version 10.7.8) and found it computes orbit radius via
+ * `camera.position.distanceTo(target)` where `target` is a module-level
+ * `Vector3` fixed at the world origin, not the actual focus point. That only
+ * breaks when the scene's orbit target isn't at the origin — exactly our
+ * case, since `sceneCenter` shifts per view mode — so this keeps a small
+ * custom animator instead, correctly rooted in the *live* `controls.target`.
  */
 function CameraAnimator({
   sceneCenter,
-  sceneRadius,
-  maxFar,
   controlsRef,
   triggerRef,
   isProgrammaticUpdate,
 }: {
   sceneCenter: [number, number, number];
-  sceneRadius: number;
-  /** Floor for `camera.far` — must cover the full manual-zoom range
-   * (`maxZoomDistance`), not just whatever distance the current blend
-   * happens to be passing through. */
-  maxFar: number;
   controlsRef: React.RefObject<OrbitControlsImpl | null>;
   triggerRef: React.RefObject<CameraTrigger | null>;
   isProgrammaticUpdate: React.RefObject<boolean>;
@@ -180,19 +254,14 @@ function CameraAnimator({
   const startQuat = useRef(new THREE.Quaternion());
   const targetQuat = useRef(new THREE.Quaternion());
   const orientationProgress = useRef(1); // 1 = settled/idle
-
-  const startFov = useRef(NORMAL_FOV);
-  const targetFov = useRef(NORMAL_FOV);
-  const flattenProgress = useRef(1);
+  const radius = useRef(0); // orbit distance, captured once per click, held constant through the blend
 
   const pendingDirection = useRef<THREE.Vector3 | null>(null);
-  const pendingFlatten = useRef<boolean | null>(null); // null = no pending fov change
-  // The world-axis direction we're currently flattened/aligned to (a face
-  // click), so clicking that same gizmo face again can flip to look from the
-  // opposite side instead of re-snapping to the same view. Cleared whenever
-  // the user takes manual control (see `unflatten`) or a non-face (edge/
-  // corner) direction is snapped to, since neither leaves us "aligned" to a
-  // single axis.
+  // The world-axis direction we're currently aligned to (a face click), so
+  // clicking that same gizmo face again can flip to look from the opposite
+  // side instead of re-snapping to the same view. Cleared whenever the user
+  // takes manual control, or a non-face (edge/corner) direction is snapped
+  // to, since neither leaves us "aligned" to a single axis.
   const currentAxisDirection = useRef<THREE.Vector3 | null>(null);
   // A camera-typed helper, not a plain Object3D: THREE.Object3D.lookAt() and
   // THREE.Camera.lookAt() use opposite conventions (confirmed in three.js's
@@ -201,68 +270,53 @@ function CameraAnimator({
   // a camera's local -Z does). Using a plain Object3D here silently inverted
   // every axis this dummy ever computed — every "look from this direction"
   // came out backwards. Never rendered; just borrowing lookAt's camera math.
-  const dummy = useMemo(() => new THREE.PerspectiveCamera(), []);
+  const dummy = useMemo(() => new THREE.OrthographicCamera(), []);
   const [centerX, centerY, centerZ] = sceneCenter;
 
   useEffect(() => {
     triggerRef.current = {
-      snapTo: (direction, flatten) => {
+      snapTo: (direction) => {
         const clicked = direction.clone().normalize();
-        // Clicking the same face we're already flattened/aligned to flips to
-        // the opposite side instead of re-snapping to the identical view.
+        // Nudge an exact top/bottom-face click a hair off the true pole —
+        // see POLE_EPSILON's comment for why the exact pole is unsafe here.
+        if (Math.abs(clicked.y) > 1 - 1e-6) {
+          clicked.set(0, Math.sign(clicked.y) * Math.cos(POLE_EPSILON), Math.sin(POLE_EPSILON));
+        }
+        // Clicking the same face we're already aligned to flips to the
+        // opposite side instead of re-snapping to the identical view.
         const isSameAxis =
-          flatten && currentAxisDirection.current !== null && currentAxisDirection.current.dot(clicked) > 0.99;
+          currentAxisDirection.current !== null && currentAxisDirection.current.dot(clicked) > 0.99;
         const finalDirection = isSameAxis ? clicked.negate() : clicked;
 
         pendingDirection.current = finalDirection;
-        pendingFlatten.current = flatten;
-        currentAxisDirection.current = flatten ? finalDirection.clone() : null;
+        currentAxisDirection.current = finalDirection.clone();
       },
-      unflatten: () => {
+      cancelBlend: () => {
         currentAxisDirection.current = null;
-        // Immediately cede the orientation channel back to OrbitControls so
-        // a drag starting mid-snap-animation doesn't fight our per-frame
-        // quaternion writes.
+        // Immediately cede orientation back to OrbitControls so a drag
+        // starting mid-snap doesn't fight our per-frame quaternion writes.
         orientationProgress.current = 1;
-        // Idempotent: only kick off a new blend if we're not already
-        // targeting normal — without this, a continuous stream of onChange
-        // events during a real drag would keep resetting flattenProgress to
-        // 0 and the fov would never actually finish blending back.
-        if (targetFov.current !== NORMAL_FOV) {
-          pendingFlatten.current = false;
-        }
       },
     };
   }, [triggerRef]);
 
   useFrame((state, delta) => {
     const camera = state.camera;
-    if (!(camera instanceof THREE.PerspectiveCamera)) return;
+    if (!(camera instanceof THREE.OrthographicCamera)) return;
     const target = new THREE.Vector3(centerX, centerY, centerZ);
 
     if (pendingDirection.current) {
       const direction = pendingDirection.current;
       pendingDirection.current = null;
+      radius.current = camera.position.distanceTo(target);
       startQuat.current.copy(camera.quaternion);
-      const up =
-        Math.abs(direction.y) > 0.9
-          ? new THREE.Vector3(0, 0, direction.y > 0 ? -1 : 1)
-          : new THREE.Vector3(0, 1, 0);
       dummy.position.copy(target).add(direction);
-      dummy.up.copy(up);
+      dummy.up.set(0, 1, 0);
       dummy.lookAt(target);
       targetQuat.current.copy(dummy.quaternion);
       orientationProgress.current = 0;
     }
 
-    if (pendingFlatten.current !== null) {
-      startFov.current = camera.fov;
-      targetFov.current = pendingFlatten.current ? FLATTENED_FOV : NORMAL_FOV;
-      pendingFlatten.current = null;
-      flattenProgress.current = 0;
-    }
-
-    let changed = false;
     if (orientationProgress.current < 1) {
       orientationProgress.current = Math.min(1, orientationProgress.current + delta / BLEND_DURATION);
       camera.quaternion.slerpQuaternions(
@@ -270,41 +324,16 @@ function CameraAnimator({
         targetQuat.current,
         easeInOutCubic(orientationProgress.current),
       );
-      changed = true;
-    }
-    if (flattenProgress.current < 1) {
-      flattenProgress.current = Math.min(1, flattenProgress.current + delta / BLEND_DURATION);
-      camera.fov = THREE.MathUtils.lerp(
-        startFov.current,
-        targetFov.current,
-        easeInOutCubic(flattenProgress.current),
-      );
-      changed = true;
-    }
-
-    if (changed) {
-      const frustumHalf = sceneRadius * 1.15;
-      const distance = frustumHalf / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
-      camera.position
-        .copy(target)
-        .addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion), distance);
-      camera.near = Math.max(0.1, distance - sceneRadius * 3);
-      // Floored at `maxFar`, not just `distance + margin`: this only ever
-      // runs while a blend is *active*, so once it settles, camera.far is
-      // left at whatever this last computed — if that were based on the
-      // blend's transient distance alone, it'd be far too short for
-      // whatever the user zooms out to next via OrbitControls (which goes
-      // all the way to maxZoomDistance and never touches camera.far itself).
-      camera.far = Math.max(distance + sceneRadius * 3, maxFar);
-      camera.updateProjectionMatrix();
+      const backDirection = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
+      camera.position.copy(target).addScaledVector(backDirection, radius.current);
 
       const controls = controlsRef.current;
       if (controls) {
         // `controls.update()` fires OrbitControls' own 'change' event, which
-        // Scene listens to (to unflatten on a *real* user drag) — without
-        // this flag, that listener can't tell our own animation-driven sync
-        // apart from actual user input, and would call unflatten() on every
-        // single frame of this animation, cancelling it immediately.
+        // Scene listens to (to cancel the blend on a *real* user drag) —
+        // without this flag, that listener can't tell our own animation-
+        // driven sync apart from actual user input, and would cancel the
+        // blend on every single frame of this animation, immediately.
         isProgrammaticUpdate.current = true;
         controls.target.copy(target);
         controls.update();
@@ -374,38 +403,36 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
       ((maxX - minX) / 2) ** 2 + ((maxY - minY) / 2) ** 2 + ((maxZ - minZ) / 2) ** 2,
     ) + 5;
 
-  const cameraDistance = sceneRadius * 2.2 + 40;
-  // The flattened (near-orthographic) view needs the camera much farther
-  // away than the normal perspective distance — the zoom-distance clamp
-  // below has to accommodate that or it'll fight the flatten animation.
-  const flattenedDistance =
-    (sceneRadius * 1.15) / Math.tan(THREE.MathUtils.degToRad(FLATTENED_FOV) / 2);
-
-  // Cap how far OrbitControls can zoom out so the model can't be zoomed away
-  // into an unrecognizable speck (or panned/zoomed past the camera's far
-  // clipping plane and vanish); cap zooming in too, so the camera can't push
-  // through the geometry.
-  const minZoomDistance = Math.max(5, span * 0.15);
-  const maxZoomDistance = Math.max(cameraDistance * 2.5, flattenedDistance * 1.2);
-  const cameraFar = maxZoomDistance * 1.5 + 500;
+  // Frozen per view-mode switch, not per dimension tweak — see SceneCamera's
+  // doc comment for why.
+  const initialFraming = useMemo(() => {
+    const d = sceneRadius * 2.5 + 40;
+    const offset: [number, number, number] = [d, d * 0.8, d];
+    return {
+      position: [sceneCenter[0] + offset[0], sceneCenter[1] + offset[1], sceneCenter[2] + offset[2]] as [
+        number,
+        number,
+        number,
+      ],
+      orbitRadius: Math.hypot(offset[0], offset[1], offset[2]),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const triggerRef = useRef<CameraTrigger | null>(null);
   const isProgrammaticUpdate = useRef(false);
 
   return (
-    <Canvas
-      shadows
-      camera={{
-        position: [cameraDistance, cameraDistance * 0.8, cameraDistance],
-        fov: NORMAL_FOV,
-        far: cameraFar,
-      }}
-    >
+    <Canvas shadows>
+      <SceneCamera
+        initialPosition={initialFraming.position}
+        orbitRadius={initialFraming.orbitRadius}
+        sceneRadius={sceneRadius}
+        viewMode={viewMode}
+      />
       <CameraAnimator
         sceneCenter={sceneCenter}
-        sceneRadius={sceneRadius}
-        maxFar={cameraFar}
         controlsRef={controlsRef}
         triggerRef={triggerRef}
         isProgrammaticUpdate={isProgrammaticUpdate}
@@ -430,21 +457,21 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
         ref={controlsRef}
         makeDefault
         target={sceneCenter}
-        minDistance={minZoomDistance}
-        maxDistance={maxZoomDistance}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
+        minPolarAngle={POLE_EPSILON}
+        maxPolarAngle={Math.PI - POLE_EPSILON}
         // `onStart` fires on any pointerdown on the canvas — including a
         // click on the gizmo, which renders into the same canvas — so it
         // can't tell "starting a real drag" from "about to click a gizmo
         // face" apart. `onChange` only fires once the camera has actually
         // moved, which a plain click never does.
         onChange={() => {
-          if (!isProgrammaticUpdate.current) triggerRef.current?.unflatten();
+          if (!isProgrammaticUpdate.current) triggerRef.current?.cancelBlend();
         }}
       />
       <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-        <ViewCubeFaces
-          onDirectionClick={(direction, flatten) => triggerRef.current?.snapTo(direction, flatten)}
-        />
+        <ViewCubeFaces onDirectionClick={(direction) => triggerRef.current?.snapTo(direction)} />
       </GizmoHelper>
     </Canvas>
   );
