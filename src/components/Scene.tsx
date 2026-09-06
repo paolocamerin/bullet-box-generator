@@ -1,10 +1,17 @@
-import { GizmoHelper, GizmoViewcube, Grid, OrbitControls, OrthographicCamera } from "@react-three/drei";
+import {
+  GizmoHelper,
+  GizmoViewcube,
+  Grid,
+  OrbitControls,
+  OrthographicCamera,
+  PerspectiveCamera,
+} from "@react-three/drei";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { DerivedDimensions } from "../geometry/dimensions";
-import type { ViewMode } from "../types";
+import type { ProjectionMode, ViewMode } from "../types";
 import { BoxMesh } from "./BoxMesh";
 import { LidMesh } from "./LidMesh";
 
@@ -13,6 +20,7 @@ interface SceneProps {
   lidGeometry: THREE.BufferGeometry | null;
   dimensions: DerivedDimensions;
   viewMode: ViewMode;
+  projectionMode: ProjectionMode;
 }
 
 const LIGHT_DIRECTION = { x: 0.5136, y: 0.7534, z: 0.4109 }; // normalized (150, 220, 120)
@@ -22,6 +30,7 @@ const LIGHT_DIRECTION = { x: 0.5136, y: 0.7534, z: 0.4109 }; // normalized (150,
 const AXIS_FACE_LABELS = ["X+", "X-", "Y+", "Y-", "Z+", "Z-"];
 
 const BLEND_DURATION = 0.45; // seconds
+const NORMAL_FOV = 40;
 
 // OrbitControls forcibly calls `object.lookAt(target)` at the end of every
 // single internal update() (verified in three.js's OrbitControls source) —
@@ -32,13 +41,16 @@ const BLEND_DURATION = 0.45; // seconds
 // degrees is visually indistinguishable from true top-down but avoids the
 // singularity entirely; used both for OrbitControls' own polar-angle clamp
 // (manual dragging near the poles) and for the gizmo's Y+/Y- click targets,
-// so neither ever asks for the exact pole in the first place.
+// so neither ever asks for the exact pole in the first place. Applies to
+// both projection types equally — the singularity is a `lookAt`/`up`
+// property, independent of projection matrix.
 const POLE_EPSILON = THREE.MathUtils.degToRad(2);
 
-// Dimensionless multipliers on the "fit" framing established by the camera's
-// frustum bounds (zoom=1 exactly frames the model) — unlike the old
-// perspective-distance system, these don't need to scale with model size,
-// since the frustum itself is already normalized to sceneRadius/aspect.
+// Orthographic zoom limits: dimensionless multipliers on the "fit" framing
+// established by the camera's frustum bounds (zoom=1 exactly frames the
+// model) — unlike distance-based limits, these don't need to scale with
+// model size, since the frustum itself is already normalized to
+// sceneRadius/aspect.
 const MIN_ZOOM = 0.6; // max zoom-out limit
 const MAX_ZOOM = 6; // max zoom-in limit
 
@@ -111,33 +123,37 @@ function ShadowLight({ center, radius }: { center: [number, number, number]; rad
 }
 
 /**
- * The main view camera. Orthographic-only (no perspective) — first-class
- * support in both `OrbitControls` (dollies via `camera.zoom` for ortho
- * cameras, clamped by `minZoom`/`maxZoom`, calling `updateProjectionMatrix()`
- * itself) and drei's own `<OrthographicCamera>` (which re-calls
- * `updateProjectionMatrix()` on every render, handling the same
- * declarative-prop-mutation gotcha `ShadowLight` above needs an explicit
- * `useEffect` for).
+ * The orthographic view camera. First-class support in both `OrbitControls`
+ * (dollies via `camera.zoom`, clamped by `minZoom`/`maxZoom`, calling
+ * `updateProjectionMatrix()` itself) and drei's own `<OrthographicCamera>`
+ * (which re-calls `updateProjectionMatrix()` on every render, handling the
+ * same declarative-prop-mutation gotcha `ShadowLight` above needs an
+ * explicit `useEffect` for).
  *
  * `initialPosition`/`orbitRadius` are frozen per view-mode switch (see
  * `Scene`, keyed on `[viewMode]`) — not on every dimension tweak — so the
  * camera gets a sensible fresh framing when the layout drastically changes
  * (assembled/exploded/side-by-side sit at very different scales/offsets),
  * but never yanks itself out from under an ordinary slider adjustment or a
- * manual orbit/zoom the user is mid-way through.
+ * manual orbit/zoom the user is mid-way through. The *same* frozen
+ * `initialPosition` is shared with `PerspectiveSceneCamera` below — it's
+ * just a world-space point, equally valid for either projection type; only
+ * the frustum specifics (this component's left/right/top/bottom vs. the
+ * other's fov) differ per type.
  */
-function SceneCamera({
+function OrthographicSceneCamera({
+  cameraRef,
   initialPosition,
   orbitRadius,
   sceneRadius,
   viewMode,
 }: {
+  cameraRef: React.RefObject<THREE.OrthographicCamera | null>;
   initialPosition: [number, number, number];
   orbitRadius: number;
   sceneRadius: number;
   viewMode: ViewMode;
 }) {
-  const cameraRef = useRef<THREE.OrthographicCamera>(null);
   const { width, height } = useThree((state) => state.size);
   const aspect = height > 0 ? width / height : 1;
 
@@ -174,7 +190,6 @@ function SceneCamera({
   return (
     <OrthographicCamera
       ref={cameraRef}
-      makeDefault
       position={initialPosition}
       left={-halfWidth}
       right={halfWidth}
@@ -184,6 +199,96 @@ function SceneCamera({
       far={far}
     />
   );
+}
+
+/**
+ * The perspective view camera — the counterpart to `OrthographicSceneCamera`
+ * above, sharing the same frozen `initialPosition`. No `zoom` concept here:
+ * OrbitControls dollies a perspective camera by moving `camera.position`
+ * (distance-based, via `minDistance`/`maxDistance`), which the reactive
+ * `position` prop already resets correctly on a view-mode change — no
+ * separate imperative reset effect needed, unlike the orthographic case.
+ */
+function PerspectiveSceneCamera({
+  cameraRef,
+  initialPosition,
+  orbitRadius,
+  sceneRadius,
+}: {
+  cameraRef: React.RefObject<THREE.PerspectiveCamera | null>;
+  initialPosition: [number, number, number];
+  orbitRadius: number;
+  sceneRadius: number;
+}) {
+  const near = 0.1;
+  const far = orbitRadius + sceneRadius * 4 + 200;
+
+  return (
+    <PerspectiveCamera ref={cameraRef} position={initialPosition} fov={NORMAL_FOV} near={near} far={far} />
+  );
+}
+
+/**
+ * The sole authority over which camera is `state.camera` — deliberately
+ * bypasses both `<PerspectiveCamera makeDefault>`/`<OrthographicCamera
+ * makeDefault>` entirely (neither camera component is ever given that prop).
+ *
+ * Traced drei's `makeDefault` implementation (identical in both components):
+ * each one's own effect does `oldCam = camera; set({camera: self}); return
+ * () => set({camera: oldCam})`. That's correct for the common case (one
+ * camera mounts/unmounts), but breaks for two *permanently-mounted* cameras
+ * whose `makeDefault` prop flips back and forth — each side's cleanup
+ * captures a stale, independently-closed-over `oldCam` snapshot from
+ * whenever *it* last activated, and repeated toggling desyncs the two
+ * closures until a cleanup restores `state.camera` to a stale intermediate
+ * value that's neither of our two real cameras (worked through the exact
+ * fiber-order trace; a second perspective<->orthographic round trip reliably
+ * reproduces it). Centralizing the swap here — one ref tracking what was
+ * previously active, one imperative `set()` call — has no such staleness:
+ * there's only one piece of state, owned in one place.
+ *
+ * Also copies position/orientation from whichever camera was active a
+ * moment ago onto the one becoming active, so toggling projection mode
+ * preserves the exact current view (only the projection math changes)
+ * instead of jumping to that camera's own last-used framing.
+ *
+ * `useLayoutEffect` (not `useEffect`) so this lands before the next actual
+ * WebGL render — R3F's render loop runs outside React's commit phase, so
+ * this only needs to beat that, not any particular ordering against the
+ * camera components' own layout effects (which only touch the independent
+ * projection matrix, never position/orientation).
+ */
+function ProjectionSync({
+  projectionMode,
+  perspectiveCameraRef,
+  orthographicCameraRef,
+}: {
+  projectionMode: ProjectionMode;
+  perspectiveCameraRef: React.RefObject<THREE.PerspectiveCamera | null>;
+  orthographicCameraRef: React.RefObject<THREE.OrthographicCamera | null>;
+}) {
+  const set = useThree((state) => state.set);
+  const previousMode = useRef<ProjectionMode | null>(null);
+
+  useLayoutEffect(() => {
+    const incoming =
+      projectionMode === "perspective" ? perspectiveCameraRef.current : orthographicCameraRef.current;
+    if (!incoming) return;
+
+    if (previousMode.current !== null && previousMode.current !== projectionMode) {
+      const outgoing =
+        previousMode.current === "perspective" ? perspectiveCameraRef.current : orthographicCameraRef.current;
+      if (outgoing) {
+        incoming.position.copy(outgoing.position);
+        incoming.quaternion.copy(outgoing.quaternion);
+      }
+    }
+
+    set({ camera: incoming });
+    previousMode.current = projectionMode;
+  }, [projectionMode, perspectiveCameraRef, orthographicCameraRef, set]);
+
+  return null;
 }
 
 /**
@@ -228,9 +333,11 @@ export interface CameraTrigger {
 /**
  * Animates only camera *orientation* — a single quaternion slerp, holding
  * orbit radius constant throughout. No fov, no near/far, no per-frame
- * distance recompute: none of that coupling exists for an orthographic
- * camera, which is the whole point of going orthographic-only (see the plan
- * doc's "Camera & Gizmo Rework" section for the fuller why).
+ * distance recompute: none of that coupling that used to exist when a single
+ * camera faked orthographic by shrinking its fov toward zero. Works
+ * identically for either concrete camera type (perspective or orthographic)
+ * — it only ever touches `position`/`quaternion`, both plain `THREE.Camera`
+ * properties independent of projection type.
  *
  * Deliberately doesn't call drei's own `GizmoHelper.tweenCamera` — traced its
  * source (installed version 10.7.8) and found it computes orbit radius via
@@ -269,7 +376,9 @@ function CameraAnimator({
   // a generic object's local +Z faces the target, useful for sprites/decals;
   // a camera's local -Z does). Using a plain Object3D here silently inverted
   // every axis this dummy ever computed — every "look from this direction"
-  // came out backwards. Never rendered; just borrowing lookAt's camera math.
+  // came out backwards. Never rendered; just borrowing lookAt's camera math
+  // — its own concrete subtype doesn't matter, the override is at the
+  // `Camera` level, shared by every camera type.
   const dummy = useMemo(() => new THREE.OrthographicCamera(), []);
   const [centerX, centerY, centerZ] = sceneCenter;
 
@@ -302,7 +411,7 @@ function CameraAnimator({
 
   useFrame((state, delta) => {
     const camera = state.camera;
-    if (!(camera instanceof THREE.OrthographicCamera)) return;
+    if (!(camera instanceof THREE.OrthographicCamera) && !(camera instanceof THREE.PerspectiveCamera)) return;
     const target = new THREE.Vector3(centerX, centerY, centerZ);
 
     if (pendingDirection.current) {
@@ -345,7 +454,7 @@ function CameraAnimator({
   return null;
 }
 
-export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneProps) {
+export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode, projectionMode }: SceneProps) {
   const span = Math.max(dimensions.width, dimensions.depth, dimensions.totalHeight);
   const gap = Math.max(10, span * 0.08);
 
@@ -403,8 +512,10 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
       ((maxX - minX) / 2) ** 2 + ((maxY - minY) / 2) ** 2 + ((maxZ - minZ) / 2) ** 2,
     ) + 5;
 
-  // Frozen per view-mode switch, not per dimension tweak — see SceneCamera's
-  // doc comment for why.
+  // Frozen per view-mode switch, not per dimension tweak — see
+  // OrthographicSceneCamera's doc comment for why. Shared by both camera
+  // components; only the frustum specifics (fov vs left/right/top/bottom)
+  // differ per projection type.
   const initialFraming = useMemo(() => {
     const d = sceneRadius * 2.5 + 40;
     const offset: [number, number, number] = [d, d * 0.8, d];
@@ -419,17 +530,39 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode]);
 
+  // Perspective's distance-based zoom limits, roughly matching the
+  // orthographic MIN_ZOOM/MAX_ZOOM in spirit (similarly tightened max
+  // zoom-out) so neither projection mode feels more/less constrained than
+  // the other.
+  const cameraDistance = sceneRadius * 2.2 + 40;
+  const minDistance = Math.max(5, span * 0.15);
+  const maxDistance = cameraDistance * 1.75;
+
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const triggerRef = useRef<CameraTrigger | null>(null);
   const isProgrammaticUpdate = useRef(false);
+  const perspectiveCameraRef = useRef<THREE.PerspectiveCamera>(null);
+  const orthographicCameraRef = useRef<THREE.OrthographicCamera>(null);
 
   return (
     <Canvas shadows>
-      <SceneCamera
+      <PerspectiveSceneCamera
+        cameraRef={perspectiveCameraRef}
+        initialPosition={initialFraming.position}
+        orbitRadius={initialFraming.orbitRadius}
+        sceneRadius={sceneRadius}
+      />
+      <OrthographicSceneCamera
+        cameraRef={orthographicCameraRef}
         initialPosition={initialFraming.position}
         orbitRadius={initialFraming.orbitRadius}
         sceneRadius={sceneRadius}
         viewMode={viewMode}
+      />
+      <ProjectionSync
+        projectionMode={projectionMode}
+        perspectiveCameraRef={perspectiveCameraRef}
+        orthographicCameraRef={orthographicCameraRef}
       />
       <CameraAnimator
         sceneCenter={sceneCenter}
@@ -459,6 +592,8 @@ export function Scene({ boxGeometry, lidGeometry, dimensions, viewMode }: SceneP
         target={sceneCenter}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
+        minDistance={minDistance}
+        maxDistance={maxDistance}
         minPolarAngle={POLE_EPSILON}
         maxPolarAngle={Math.PI - POLE_EPSILON}
         // `onStart` fires on any pointerdown on the canvas — including a

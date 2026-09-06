@@ -11,7 +11,7 @@ import { useGeneratedModel } from "./hooks/useGeneratedModel";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { defaultParams } from "./state/defaultParams";
 import { defaultSettings } from "./state/defaultSettings";
-import type { AppSettings, BoxParams, CookieConsent, Preset, ViewMode } from "./types";
+import type { AppSettings, BoxParams, CookieConsent, Preset, ProjectionMode, ViewMode } from "./types";
 
 function App() {
   const [storedParams, setParams] = useLocalStorage<BoxParams>("bullet-box:params", defaultParams);
@@ -20,6 +20,10 @@ function App() {
     defaultSettings,
   );
   const [viewMode, setViewMode] = useLocalStorage<ViewMode>("bullet-box:view-mode", "assembled");
+  const [projectionMode, setProjectionMode] = useLocalStorage<ProjectionMode>(
+    "bullet-box:projection-mode",
+    "perspective",
+  );
   const [presets, setPresets] = useLocalStorage<Preset[]>("bullet-box:presets", []);
   const [cookieConsent, setCookieConsent] = useLocalStorage<CookieConsent>(
     "bullet-box:cookie-consent",
@@ -77,6 +81,7 @@ function App() {
           lidGeometry={lidGeometry}
           dimensions={dimensions}
           viewMode={viewMode}
+          projectionMode={projectionMode}
         />
         <button
           className="settings-trigger"
@@ -84,6 +89,14 @@ function App() {
           aria-label="Open settings"
         >
           <Gear size={20} weight="bold" />
+        </button>
+        <button
+          className="projection-toggle"
+          onClick={() => setProjectionMode(projectionMode === "perspective" ? "orthographic" : "perspective")}
+          aria-label={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
+          title={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
+        >
+          {projectionMode === "perspective" ? "Perspective" : "Orthographic"}
         </button>
         {isRegenerating && <div className="regenerating-badge">Regenerating…</div>}
       </div>

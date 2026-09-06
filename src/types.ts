@@ -23,6 +23,8 @@ export type ExportFormat = "stl" | "obj";
 
 export type ViewMode = "assembled" | "exploded" | "sideBySide";
 
+export type ProjectionMode = "perspective" | "orthographic";
+
 export type CookieConsent = "unset" | "accepted" | "declined";
 
 export interface Preset {
