@@ -1,4 +1,4 @@
-import { Gear } from "@phosphor-icons/react";
+import { Cube, Gear, Perspective } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { ANALYTICS_ENABLED, GA_MEASUREMENT_ID } from "./analytics/config";
@@ -90,14 +90,25 @@ function App() {
         >
           <Gear size={20} weight="bold" />
         </button>
-        <button
-          className="projection-toggle"
-          onClick={() => setProjectionMode(projectionMode === "perspective" ? "orthographic" : "perspective")}
-          aria-label={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
-          title={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
-        >
-          {projectionMode === "perspective" ? "Perspective" : "Orthographic"}
-        </button>
+        <div className="projection-toggle-group">
+          <span className="projection-toggle-label">
+            {projectionMode === "perspective" ? "Orthographic" : "Perspective"}
+          </span>
+          <button
+            className="projection-toggle"
+            onClick={() =>
+              setProjectionMode(projectionMode === "perspective" ? "orthographic" : "perspective")
+            }
+            aria-label={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
+            title={`Switch to ${projectionMode === "perspective" ? "orthographic" : "perspective"} view`}
+          >
+            {projectionMode === "perspective" ? (
+              <Cube size={18} weight="bold" />
+            ) : (
+              <Perspective size={18} weight="bold" />
+            )}
+          </button>
+        </div>
         {isRegenerating && <div className="regenerating-badge">Regenerating…</div>}
       </div>
       <ControlPanel
